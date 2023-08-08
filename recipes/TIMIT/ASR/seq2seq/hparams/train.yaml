@@ -1,4 +1,4 @@
-# ################################
+# ###############################
 # Model: seq2seq ASR on TIMIT with CRDNN (with LiGRU)
 # Authors:
 # * Mirco Ravanelli 2020
@@ -20,7 +20,8 @@ train_annotation: !ref <output_folder>/train.json
 valid_annotation: !ref <output_folder>/dev.json
 test_annotation: !ref <output_folder>/test.json
 skip_prep: False # Skip data preparation
-uppercase: False # Must be True when the TIMIT dataset is in the upper-case version
+uppercase: True # Must be True when the TIMIT dataset is in the upper-case version
+phn_set: 39 #added line Louis
 
 # Training parameters
 number_of_epochs: 50
@@ -32,7 +33,12 @@ sorting: ascending
 # Feature parameters
 sample_rate: 16000
 n_fft: 400
-n_mels: 40
+n_mels: 48 #23 default for MFCC, 40 default for FBank
+filter_shape: triangular #default is triangular (options: rectangular, gaussian)
+hop_length: 129
+chroma_coef: 7
+padding: 0
+lpf: False
 
 # Model parameters
 activation: !name:torch.nn.LeakyReLU
@@ -94,11 +100,24 @@ normalize: !new:speechbrain.processing.features.InputNormalization
 epoch_counter: !new:speechbrain.utils.epoch_loop.EpochCounter
     limit: !ref <number_of_epochs>
 
+#compute_features: !new:speechbrain.lobes.features.Fbank
+#    sample_rate: !ref <sample_rate>
+#    n_fft: !ref <n_fft>
+#    n_mels: !ref <n_mels>
+#    filter_shape: !ref <filter_shape> #added line     
 
-compute_features: !new:speechbrain.lobes.features.Fbank
-    sample_rate: !ref <sample_rate>
-    n_fft: !ref <n_fft>
+#compute_features: !new:speechbrain.lobes.features.MFCC
+#    sample_rate: !ref <sample_rate>
+#    n_fft: !ref <n_fft>
+#    n_mels: !ref <n_mels>
+    
+
+compute_features: !new:speechbrain.lobes.features.Chroma
     n_mels: !ref <n_mels>
+    hop_length: !ref <hop_length> 
+    chroma_coef: !ref <chroma_coef>
+    padding: !ref <padding>
+    lpf: !ref <lpf>
 
 enc: !new:speechbrain.lobes.models.CRDNN.CRDNN
     input_shape: [null, null, !ref <n_mels>]

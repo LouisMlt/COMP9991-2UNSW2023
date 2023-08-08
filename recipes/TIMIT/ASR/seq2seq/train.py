@@ -51,6 +51,8 @@ class ASR(sb.Brain):
         feats = self.modules.normalize(feats, wav_lens)
         x = self.modules.enc(feats)
 
+        x = x[0] # modif
+
         # output layer for ctc log-probabilities
         logits = self.modules.ctc_lin(x)
         p_ctc = self.hparams.log_softmax(logits)
@@ -326,6 +328,7 @@ if __name__ == "__main__":
             "save_json_test": hparams["test_annotation"],
             "skip_prep": hparams["skip_prep"],
             "uppercase": hparams["uppercase"],
+            "phn_set": hparams["phn_set"],
         },
     )
 

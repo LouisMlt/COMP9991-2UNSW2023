@@ -47,6 +47,9 @@ class ASR_Brain(sb.Brain):
         feats = self.hparams.compute_features(wavs)
         feats = self.modules.normalize(feats, wav_lens)
         x = self.modules.enc(feats)
+
+        x = x[0] #added for LSTM/GRU instead of CRDNN
+
         x = self.modules.enc_lin(x)
 
         # Prepend bos token at the beginning

@@ -1113,7 +1113,12 @@ class InputNormalization(torch.nn.Module):
 
                     self.count = self.count + 1
 
-                x = (x - self.glob_mean.data) / (self.glob_std.data)
+                #code added (Alan)
+                #old version : x = (x - self.glob_mean.data) / (self.glob_std.data)
+                if x.is_cuda:
+                    x = (x - self.glob_mean.data.cuda())/(self.glob_std.data.cuda())
+                else:
+                    x = (x - self.glob_mean.data) / (self.glob_std.data)
 
         return x
 

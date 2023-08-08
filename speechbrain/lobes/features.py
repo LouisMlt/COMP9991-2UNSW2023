@@ -1,4 +1,4 @@
-"""Basic feature pipelines.
+"""Basic feature pipelines
 
 Authors
  * Mirco Ravanelli 2020
@@ -17,7 +17,259 @@ from speechbrain.processing.features import (
 from speechbrain.nnet.CNN import GaborConv1d
 from speechbrain.nnet.normalization import PCEN
 from speechbrain.nnet.pooling import GaussianLowpassPooling
+#from speechbrain.lobes.chroma_filters import get_chroma_filters #alan version
+from speechbrain.lobes.tina_chroma_filters import get_chroma_filters
+from speechbrain.lobes.data_preprocessing import get_lpfilter
+#from speechbrain.lobes.data_preprocessing import get_chroma_filters, get_lpfilter #alan version
+#import torchaudio
+import math
 
+class Chroma(torch.nn.Module):
+    def __init__(
+            self,
+            n_chroma = 48,  #smaller or equal to 48, different from n_mels when use_cor = True
+            win_length = 129, #kernel_size
+            hop_length=64, #stride between 1 and win_length, only if use_cor=False
+            chroma_coef=15,
+            padding=0, #only if use_cor=False
+            lpf = False,
+            use_cor = False,
+    ):
+        super(Chroma,self).__init__()
+        
+        #print("memory cuda", torch.cuda.memory_allocated(device='cuda'))
+        self.n_chroma = n_chroma
+        self.cor = use_cor
+        if self.cor :
+            self.cf = torch.nn.Conv1d(in_channels=1,out_channels=n_chroma,kernel_size=win_length,stride=1,padding="same",bias=False).cuda()
+
+        else :  
+            self.cf = torch.nn.Conv1d(in_channels=1,out_channels=n_chroma,kernel_size=win_length,stride=hop_length,padding=padding,bias=False).cuda()
+        
+        #print("memory cuda after conv1d init", torch.cuda.memory_allocated(device='cuda'))
+
+
+        CF = get_chroma_filters().cuda()
+        CF = CF.flip(1) #added by louis
+        #print("Chroma.__init__()")
+        #print(self.cf.weight.data.size(),CF.size())
+        CF = CF[:n_chroma, :]
+        self.cf.weight.data = CF.unsqueeze(1)*10**(-1*chroma_coef)
+        #print(torch.sum(self.cf.weight.data*self.cf.weight.data))
+        
+
+        self.lpf = lpf
+        
+        if self.lpf:
+            print("Init lpf")
+            ker_size = CF.size()[0] #129, 130?
+            self.conv_lpf = torch.nn.Conv1d(in_channels=1,out_channels=1,kernel_size=ker_size,stride=1,padding='same',bias=False).cuda()
+            filt = get_lpfilter().cuda()
+            filt = filt.unsqueeze(0)
+            filt = filt.unsqueeze(0)
+            self.conv_lpf.weight.data = filt.flip(2)
+
+            #print("memory cuda after lpf init", torch.cuda.memory_allocated(device='cuda'))
+
+
+    def forward(self,wav):
+        wav = wav.unsqueeze(1)
+        #print("wav max", wav.max(), "min", wav.min(), "std", wav.std())
+        #wav = wav * 2**15 #unnormalization
+        #print("unnorm wav max", wav.max(), "min", wav.min(), "std", wav.std())
+
+
+        n_chroma = self.n_chroma
+        #print(n_chroma)
+
+        if self.lpf : #low pass filter
+            #print("wav before lpf", wav.size())
+            wav = self.conv_lpf(wav).detach()
+            #print("wav after lpf", wav.size())
+
+            #print("memory cuda after applying lpf", torch.cuda.memory_allocated(device='cuda'))
+
+
+        if self.cor :
+            chroma_feat = self.cf(wav).detach()
+            #print("chroma feat size bf transpose", chroma_feat.size())
+            chroma_feat = chroma_feat.transpose(1,2) 
+            
+            #print("nan in chroma feat ?", torch.any(torch.isnan(chroma_feat)), torch.numel(chroma_feat), torch.isnan(chroma_feat).sum())
+            #print("chroma feat exp", chroma_feat[0,:5,:3], chroma_feat[0,1000:1010,:3], "max", chroma_feat.max(), "min", chroma_feat.min())
+
+            win_cor = 25e-3 #e.g. 25ms
+            hop_cor = 10e-3 #e.g. 10ms
+            fs = 16e3 #sampling freq 16kHz
+            win_index = int(win_cor*fs)
+            hop_index = int (hop_cor*fs)
+            beg = 0
+            end = beg + win_index
+            length_sig = chroma_feat.size()[1]
+            #print("len sig/chroma", chroma_feat.size())
+            size_out = math.ceil(length_sig/hop_index)  
+            #features = torch.zeros(16, size_out, 48*48).cuda()
+            
+
+            idx = torch.triu_indices(n_chroma,n_chroma,1)#only keep upper triangular coefficients + no diagonal coef (offset=1) (total : 48*47/2=1128)
+            
+            #idx = [[],[]]
+            #for i in range(n_chroma):
+            #    for j in range(n_chroma):
+            #        idx[0].append(i)
+            #        idx[1].append(j)
+            #idx = torch.tensor(idx)
+
+
+
+            #remove the zeroes (i+j odd)
+            #idx = [[],[]]
+            #for i in range(n_chroma):
+            #    for j in range(n_chroma):
+            #        if ((i+j)%2==0) and (j>=i): #j>i if no diagonal coef
+            #            idx[0].append(i)
+            #            idx[1].append(j)
+            #idx = torch.tensor(idx)
+            
+            #even1, even2 = [], []
+            #odd1, odd2 = [], []
+            #idx = [[],[]]
+            #for i in range(n_chroma):
+            #    for j in range(n_chroma):
+            #        if ((i+j)%2==0) and (j>i):
+            #            if i%2==0:
+            #                even1.append(i)
+            #                even2.append(j)
+            #            else :
+            #                odd1.append(i)
+            #                odd2.append(j)
+            #idx = torch.tensor([even1 + odd1, even2 + odd2])
+
+
+            features = torch.zeros(wav.size()[0], size_out, int(n_chroma*(n_chroma-1)/2)).cuda() #(16,size_out,48*47//2)
+            #features = torch.zeros(wav.size()[0], size_out, int((n_chroma/2)*(n_chroma/2-1))).cuda() #if no diago
+            #features = torch.zeros(wav.size()[0], size_out, int((n_chroma/2)*(n_chroma/2+1))).cuda()
+            #features = torch.zeros(wav.size()[0], size_out, int(n_chroma*(n_chroma+1)/2)).cuda()
+            #features = torch.zeros(wav.size()[0], size_out, int(n_chroma**2)).cuda()
+
+
+            #print("expected feature size", features.size())
+            #for k in range(16) :
+            #print("memory cuda after k change", torch.cuda.memory_allocated(device='cuda'))
+
+            #print('k', k)
+            c = 0
+            # ??  input_shape # (16, 134, 48)
+            beg = 0
+            while beg < length_sig:
+                #print('beg', beg, 'len sig', length_sig)
+                if end > length_sig :
+                    enf = length_sig
+                
+                #partial_chroma = chroma_feat[k,beg:end,:].squeeze(0) #.cuda() ?
+                
+                batchPChroma = chroma_feat[:,beg:end,:].transpose(1,2)
+                mpc = torch.mean(batchPChroma, 2)
+                bpc = batchPChroma.sub(mpc.unsqueeze(2).expand_as(batchPChroma)) #substact the mean
+                cov = torch.bmm(bpc, bpc.transpose(1,2))
+                cov = cov / (batchPChroma.size()[1]-1) #unbiased covariance
+                #print("nan in cov?", torch.any(torch.isnan(cov)), torch.numel(cov), torch.isnan(cov).sum())
+
+                d = torch.diagonal(cov, dim1=1, dim2=2)
+                std = torch.pow(d, 0.5).unsqueeze(2).expand_as(cov)
+                
+                #first version
+
+                #print("nan in std?", torch.any(torch.isnan(std)), torch.numel(std), torch.isnan(std).sum())
+                #print("check if 0 in std", std.all(), std.min())
+                cov[cov==0] = 1e-10#replace 0 with very small value to avoid nan
+                cor = cov.div(std) #+0.5??
+                cor = cor.div(std.transpose(1,2))
+                cor = cor #*0.5  + 0.5 #Tina regularization ?
+                #print("nan in cor?", torch.any(torch.isnan(cor)), torch.numel(cor), torch.isnan(cor).sum())
+                #print(cor.min(), cor.max())
+                cor = torch.clamp(cor, -1.0, 1.0) #inf -> 1
+                
+                #normalization
+                #cor = torch.nn.functional.normalize(cor)
+
+                #second version with log
+                #std2 = std.mul(std.transpose(1,2))
+                #cov[cov==0] = 1e-10#replace 0 with very small value to avoid nan
+                #cor = cov.div(std2) #+0.5??
+                #logstd2 = torch.log(std2+1)
+                #cor = cor.mul(logstd2)
+
+
+                #cov = torch.matmul(partial_chroma.transpose(0,1), partial_chroma) #.cuda() ?
+                #cov = torch.bmm(chroma_feat[:,beg:end,:].transpose(1,2), chroma_feat[:,beg:end,:]) #dim (16,48,48)
+                #cov = torch.cov(partial_chroma)
+                #cor = torch.zeros_like(cov) #.cuda() ?
+                #cor = torch.zeros(wav.size()[0],n_chroma,n_chroma) #e.g (16,48,48)
+
+                #print("cor, cov size", cor.size(), cov.size())
+                #for i in range(cov.size()[0]): #48
+                #    for j in range(cov.size()[1]): #48
+                #        cor[i,j] = 0.5 * cov[i,j] / torch.sqrt(cov[i,i] * cov[j,j]) + 0.5
+                    
+                for k in range(cor.size()[0]): #16
+                    #print("k", k, "nan in chroma_feat?", torch.any(torch.isnan(chroma_feat[k,beg:end,:])), torch.numel(chroma_feat[k,beg:end,:]), torch.isnan(chroma_feat[k,beg:end,:]).sum())
+                    #print("k", k, "inf in chroma_feat?", torch.any(torch.isinf(chroma_feat[k,beg:end,:])), torch.numel(chroma_feat[k,beg:end,:]), torch.isinf(chroma_feat[k,beg:end,:]).sum())
+                    #print("chroma_fit first coef", chroma_feat[k:beg:beg+5, :5])
+                    
+                    #cor[k, :, :] = torch.corrcoef(chroma_feat[k,beg:end,:].squeeze(0).transpose(0,1))
+                    
+                    #print("chroma_feat", chroma_feat.size(), beg, end, chroma_feat[k,beg:end,:].size())
+                    #print("size before cor", chroma_feat[k,beg:end,:].squeeze(0).transpose(0,1).size())
+                    #print("k", k, "nan in cor?", torch.any(torch.isnan(cor[k, :, :])), torch.numel(cor[k, :, :]), torch.isnan(cor[k, :, :]).sum())
+                    
+                    
+
+                    #print("c", c , "k", k )
+                    #for i in range(cor.size()[1]): #48
+                        #for j in range(cor.size()[2]): #48
+                            #cor[k,i,j] = 0.5 * cov[k,i,j] / torch.sqrt(cov[k,i,i] * cov[k,j,j]) + 0.5
+                    
+                    
+
+                    #idx = torch.triu_indices(n_chroma,n_chroma,1)#only keep upper triangular coefficients + no diagonal coef (=1) (total : 48*47/2=1128)
+                    features[k, c, :] = cor[k, idx[0], idx[1]]
+                    #print("nan in features?", torch.any(torch.isnan(cor)), torch.numel(cor), torch.isnan(cor).sum())
+    
+
+                #print("size feature", features[k, c, :].size(), torch.flatten(cor).size())
+                    
+                #idx = torch.triu_indices(48,48,1)#only keep upper triangular coefficients + no diagonal coef (=1) (total : 48*47/2=1128)
+                #features[k, c, :] = cor[idx[0], idx[1]]
+                   
+                #features[k, c, :] = torch.flatten(cor)
+                #print('c', c)
+                c+=1
+                #print("memory cuda after c change", torch.cuda.memory_allocated(device='cuda'))
+
+                beg += hop_index    
+                end += hop_index
+            #print('features before transpose', features.size())
+            #features = features.transpose(1,2)
+            
+            #check if Nan ?
+            print("nan ?", torch.any(torch.isnan(features)), torch.numel(features), torch.isnan(features).sum())
+            features[features != features] = 0
+            #print("inf ?", torch.any(torch.isinf(features)))
+                                    
+
+        else :
+            #print("Chroma.forward")
+            features = self.cf(wav).detach() #no need for gradient
+            features = features.transpose(1,2)
+            
+        #normalizing ?
+        #print("memory cuda before returning features", torch.cuda.memory_allocated(device='cuda'))
+
+        #print("input",wav.size(),"features",features.size(), "1st coefs", features[:1,:5,:3])
+        #print("min", features.min(), "max", features.max(), "mean", features.mean(), "median", features.median(), "std", features.std())
+
+        return features
 
 class Fbank(torch.nn.Module):
     """Generate features for input to the speech pipeline.
@@ -33,7 +285,7 @@ class Fbank(torch.nn.Module):
     requires_grad : bool (default: False)
         Whether to allow parameters (i.e. fbank centers and
         spreads) to update during training.
-    sample_rate : int (default: 160000)
+    sample_rate : int (default: 16000)
         Sampling rate for the input waveforms.
     f_min : int (default: 0)
         Lowest frequency for the Mel filters.
@@ -144,6 +396,9 @@ class Fbank(torch.nn.Module):
             fbanks = torch.cat([fbanks, delta1, delta2], dim=2)
         if self.context:
             fbanks = self.context_window(fbanks)
+        
+        #print("wav input",wav.size(),"fbanks",fbanks.size(), "1st coefs", fbanks[:3,100:110,:3])
+        #print("min", fbanks.min(), "max", fbanks.max(), "mean", fbanks.mean(), "median", fbanks.median(), "std", fbanks.std())
         return fbanks
 
 

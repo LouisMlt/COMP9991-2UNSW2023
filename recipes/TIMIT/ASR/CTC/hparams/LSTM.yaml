@@ -1,0 +1,138 @@
+# ################################
+# Model: CTC ASR on TIMIT with CRDNN (with LiGRU)
+# Additions: TimeDomainSpecAugment
+# Authors: Mirco Ravanelli & Peter Plantinga 2020
+# ################################
+
+# Seed needs to be set at top of yaml, before objects with parameters are made
+seed: 1717
+__set_seed: !apply:torch.manual_seed [!ref <seed>]
+output_folder: !ref results/augment_noise_LSTM/<seed>
+wer_file: !ref <output_folder>/wer.txt
+save_folder: !ref <output_folder>/save
+train_log: !ref <output_folder>/train_log.txt
+
+# Data files
+data_folder: !PLACEHOLDER  # e.g. /path/to/TIMIT
+open_rir_folder: !ref <data_folder> # where to store noisy data for augment (change it if needed)
+train_annotation: !ref <output_folder>/train.json
+valid_annotation: !ref <output_folder>/dev.json
+test_annotation: !ref <output_folder>/test.json
+skip_prep: False # Skip data preparation
+uppercase: True  # Must be True when the TIMIT dataset is in the upper-case version
+phn_set: 39 
+
+# Training parameters
+number_of_epochs: 50
+batch_size: 8
+lr: 1.0
+sorting: ascending # choose between ascending, descending and random
+
+# Feature parameters
+sample_rate: 16000 #(FBank only)
+n_fft: 400 #default 400 (FBank only)
+n_mels: 48 #40 default for FBank (Both FBank and Chroma), for use_cor = True --> 48*48=2304, 48*47/2=1128
+n_chroma: 48 #default 48 (max)
+chroma_coef: 12 #default 1e-7 (Chroma only)
+hop_length: 129 #default 64 (Chroma only)
+padding: 0 #default 0 (Chroma only)
+lpf: True #(Chroma only)
+use_cor:  False 
+
+
+# Model parameters
+dropout: 0.15
+num_layers: 550
+bidirectional: True
+
+# Outputs
+output_neurons: 40
+blank_index: 0
+
+
+model: !new:speechbrain.nnet.RNN.LSTM
+    hidden_size: !ref <output_neurons>
+    input_size: !ref <n_mels>
+    dropout: !ref <dropout>
+    num_layers: !ref <num_layers>
+    bidirectional: !ref <bidirectional>
+
+    
+# Dataloader options
+train_dataloader_opts:
+    batch_size: !ref <batch_size>
+
+valid_dataloader_opts:
+    batch_size: !ref <batch_size>
+
+test_dataloader_opts:
+    batch_size: !ref <batch_size>
+
+normalize: !new:speechbrain.processing.features.InputNormalization
+    norm_type: global
+
+augmentation: !new:speechbrain.lobes.augment.TimeDomainSpecAugment
+    sample_rate: !ref <sample_rate>
+    speeds: [95, 100, 105]
+
+# Can be removed to improve speed
+env_corrupt: !new:speechbrain.lobes.augment.EnvCorrupt
+    openrir_folder: !ref <open_rir_folder>
+    babble_prob: 0.0
+    reverb_prob: 0.0
+    noise_prob: 1.0
+    noise_snr_low: 0
+    noise_snr_high: 15
+
+epoch_counter: !new:speechbrain.utils.epoch_loop.EpochCounter
+    limit: !ref <number_of_epochs>
+
+compute_features: !new:speechbrain.lobes.features.Chroma
+    n_chroma: !ref <n_chroma>
+    chroma_coef: !ref <chroma_coef>
+    padding: !ref <padding>
+    hop_length: !ref <hop_length>
+    lpf: !ref <lpf>
+    use_cor: !ref <use_cor>
+
+log_softmax: !new:speechbrain.nnet.activations.Softmax
+    apply_log: True
+
+opt_class: !name:torch.optim.Adadelta
+    rho: 0.95
+    lr: !ref <lr>
+    eps: 1.e-8
+
+lr_annealing: !new:speechbrain.nnet.schedulers.NewBobScheduler
+    initial_value: !ref <lr>
+    improvement_threshold: 0.0025
+    annealing_factor: 0.8
+    patient: 0
+
+modules:
+    model: !ref <model>
+    normalize: !ref <normalize>
+    env_corrupt: !ref <env_corrupt>
+
+jit_module_keys: [model]
+
+checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
+    checkpoints_dir: !ref <save_folder>
+    recoverables:
+        model: !ref <model>
+        scheduler: !ref <lr_annealing>
+        normalizer: !ref <normalize>
+        counter: !ref <epoch_counter>
+
+compute_cost: !name:speechbrain.nnet.losses.ctc_loss
+    blank_index: !ref <blank_index>
+
+train_logger: !new:speechbrain.utils.train_logger.FileTrainLogger
+    save_file: !ref <train_log>
+
+ctc_stats: !name:speechbrain.utils.metric_stats.MetricStats
+    metric: !name:speechbrain.nnet.losses.ctc_loss
+        blank_index: !ref <blank_index>
+        reduction: batch
+
+per_stats: !name:speechbrain.utils.metric_stats.ErrorRateStats

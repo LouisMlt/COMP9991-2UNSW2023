@@ -974,6 +974,8 @@ class Brain:
         bool
             Whether or not the optimizer step should be carried out.
         """
+        print("loss value", loss)
+
         if not torch.isfinite(loss):
             self.nonfinite_count += 1
 
@@ -1053,6 +1055,12 @@ class Brain:
             colour=self.tqdm_barcolor["train"],
         ) as t:
             for batch in t:
+                #code added (Alan)
+                _ , wav_lens = batch.sig
+                if(torch.min(wav_lens) == 0):
+                    logger.info("Warning: Zero-Length Sequence")
+                    continue
+
                 if self._optimizer_step_limit_exceeded:
                     logger.info("Train iteration limit exceeded")
                     break

@@ -40,8 +40,12 @@ class ASR_Brain(sb.Brain):
 
         feats = self.hparams.compute_features(wavs)
         feats = self.modules.normalize(feats, wav_lens)
+        #print(feats.size())
         out = self.modules.model(feats)
-        out = self.modules.output(out)
+        #print(len(out),out[0].size(),len(out[1]),out[1][0].size(),out[1][1].size())
+        #print(torch.tensor(out))
+        out = self.modules.output(out[0]) #out = self.modules.output(out)
+        
         pout = self.hparams.log_softmax(out)
 
         return pout, wav_lens
@@ -228,6 +232,7 @@ if __name__ == "__main__":
             "save_json_test": hparams["test_annotation"],
             "skip_prep": hparams["skip_prep"],
             "uppercase": hparams["uppercase"],
+            "phn_set":hparams["phn_set"],
         },
     )
 
