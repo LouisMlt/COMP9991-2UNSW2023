@@ -13,3 +13,14 @@ Due to their orthogonality, numerical stability and time shift invariance, CD's 
 
 This project will explore the use of CD's for phoneme recognition on the TIMIT dataset. Neural network models including CNN and LSTM will be tested; as well as preprocessing which may include just the raw CD components, and/or a spectrogram derived from their pairwise correlations.
 
+
+The repository : 
+
+This repository is a clone of the SpeechBrain repository --> https://github.com/speechbrain/speechbrain/tree/develop
+
+The files folders which have been modified are :
+
+speechbrain > lobes > feature.py 
+files added in the speechbrain > lobes > tina_chroma_filters.py
+files added in recipes > TIMIT > ASR 
+
