@@ -1,7 +1,7 @@
 This repository contains the code which was used for a research project at UNSW (COMP9991 T1 2023 and COMP9992 T2 2023).
-Student : Louis Milhiet z5374550
-Supervisor : Dr Alan Blair
-Cosupervisor : Dr Alekandar Ignjatovic
+- Student : Louis Milhiet z5374550
+- Supervisor : Dr Alan Blair
+- Cosupervisor : Dr Alekandar Ignjatovic
 
 The project :
 
