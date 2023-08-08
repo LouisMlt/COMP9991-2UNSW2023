@@ -20,7 +20,7 @@ This repository is a clone of the SpeechBrain repository --> https://github.com/
 
 The files folders which have been modified are :
 
-speechbrain > lobes > feature.py 
-files added in the speechbrain > lobes > tina_chroma_filters.py
-files added in recipes > TIMIT > ASR 
+- speechbrain > lobes > feature.py 
+- files added in the speechbrain > lobes > tina_chroma_filters.py
+- files added in recipes > TIMIT > ASR 
 
