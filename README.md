@@ -22,5 +22,6 @@ The files folders which have been modified are :
 
 - speechbrain > lobes > feature.py 
 - files added in the speechbrain > lobes > tina_chroma_filters.py
-- files added in recipes > TIMIT > ASR 
+- files added in recipes > TIMIT > ASR
+- results.ods contains all results for models that have been trained during the project. This file is in the main folder.
 
